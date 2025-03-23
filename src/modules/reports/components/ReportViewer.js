@@ -15,10 +15,11 @@ import useReport from '../hooks/useReport';
  * @param {boolean} props.isEmbedded - Boolean to indicate if viewer is embedded in chat
  */
 const ReportViewer = ({ reportData, isEmbedded = false }) => {
-  console.log("UPDATED ReportViewer.js loaded with insights passing");
-
   const { reportId } = useParams();
   const [activeSection, setActiveSection] = useState(0);
+
+  // For debugging
+  console.log("UPDATED ReportViewer.js loaded with insights passing");
 
   // Use the custom hook to fetch and manage report data
   const {
@@ -38,15 +39,6 @@ const ReportViewer = ({ reportData, isEmbedded = false }) => {
       getReport(reportId);
     }
   }, [reportId, reportData, getReport]);
-
-  // Debug log for report data
-  useEffect(() => {
-    const displayReport = reportData || report;
-    if (displayReport) {
-      console.log("ReportViewer processing report data:", displayReport);
-      console.log("Report sections:", displayReport.sections || []);
-    }
-  }, [reportData, report]);
 
   // Handle error state
   if (error) {
@@ -74,17 +66,20 @@ const ReportViewer = ({ reportData, isEmbedded = false }) => {
     );
   }
 
+  // Log the report data for debugging
+  console.log("ReportViewer processing report data:", displayReport);
+  console.log("Report sections:", displayReport.sections);
+
   // Extract report sections (if they exist)
   const sections = displayReport.sections || [];
   const hasSections = sections.length > 0;
 
-  // If no sections, create a default one from the overall report data
+  // If no sections but we have a narrative, create a default section with it
   const reportSections = hasSections ? sections : [
     {
-      title: 'Report Results',
+      title: "Report Results",
       content: displayReport.narrative || 'No narrative content available',
-      visualizations: displayReport.visualizations || [],
-      insights: displayReport.insights || [] // Add insights to default section
+      visualizations: displayReport.visualizations || []
     }
   ];
 
@@ -127,7 +122,7 @@ const ReportViewer = ({ reportData, isEmbedded = false }) => {
             title={reportSections[activeSection].title}
             content={reportSections[activeSection].content}
             visualizations={reportSections[activeSection].visualizations}
-            insights={reportSections[activeSection].insights} // Pass insights to section
+            insights={reportSections[activeSection].insights || []} // Pass insights properly
           />
         </div>
       </Card>

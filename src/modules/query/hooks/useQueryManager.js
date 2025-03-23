@@ -1,653 +1,486 @@
 // src/modules/query/hooks/useQueryManager.js
 import { useState, useCallback, useEffect } from 'react';
-import { useChat } from '../../chat';
-import { useDatasets } from '../../datasets';
 import { apiService } from '../../../core/api';
 import tableDataService from '../utils/tableDataService';
+import { useChat } from '../../chat';
+import { reportService } from '../../reports';
 
 /**
- * Custom hook to manage query state, API interactions, and results
- * @param {Function} setHasInteracted - Function to update the interaction state in the parent component
- * @returns {Object} Query management state and functions
+ * Custom hook for managing query state, execution, and results
+ *
+ * @param {Function} setHasInteracted - Function to update interaction state
+ * @returns {Object} - Query state and operations
  */
 const useQueryManager = (setHasInteracted) => {
   console.log("UPDATED useQueryManager.js loaded with isComplex handling");
 
+  // State for query results and metadata
   const [queryResults, setQueryResults] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const [retries, setRetries] = useState(null);
-  const [queryDatasetId, setQueryDatasetId] = useState(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [error, setError] = useState(null);
+  const [retries, setRetries] = useState(0);
+  const [activeDataset, setActiveDataset] = useState(null);
+  const [activeDatasetName, setActiveDatasetName] = useState(null);
+  const [activeReport, setActiveReport] = useState(null);
 
+  // Access chat context
   const {
-    currentMessages,
     addMessage,
-    clearMessages
+    clearMessages,
+    currentMessages
   } = useChat();
 
-  const { datasets, setActiveDataset } = useDatasets();
-
-  // Watch for new assistant messages with results
+  // Clear query results on new chat
   useEffect(() => {
-    if (currentMessages && currentMessages.length > 0) {
-      const lastMessage = currentMessages[currentMessages.length - 1];
-
-      if (lastMessage.role === 'assistant') {
-        if (lastMessage.results) {
-          setQueryResults(lastMessage.results);
-          setError(null);
-        } else if (lastMessage.error) {
-          setError(lastMessage.error);
-          setQueryResults(null);
-        }
-
-        if (lastMessage.retries !== undefined) {
-          setRetries(lastMessage.retries);
-        }
-
-        // Store dataset ID from message if available
-        if (lastMessage.datasetId) {
-          setQueryDatasetId(lastMessage.datasetId);
-        }
-      }
-    }
-  }, [currentMessages]);
-
-  // Listen for clear results events
-  useEffect(() => {
-    const handleClearResultsEvent = () => {
+    const handleClearQueryResults = () => {
       console.log("Clearing query results from event");
       setQueryResults(null);
       setError(null);
-      setRetries(null);
-      setQueryDatasetId(null);
+      setRetries(0);
+      setActiveReport(null);
     };
 
-    window.addEventListener('clearQueryResults', handleClearResultsEvent);
-
+    window.addEventListener('clearQueryResults', handleClearQueryResults);
     return () => {
-      window.removeEventListener('clearQueryResults', handleClearResultsEvent);
+      window.removeEventListener('clearQueryResults', handleClearQueryResults);
     };
   }, []);
 
-  // Diagnostic logging for query results
-  useEffect(() => {
-    if (queryResults && queryResults.length > 0) {
-      console.log("============= QUERY RESULTS DIAGNOSTIC =============");
-      console.log("Type of queryResults:", typeof queryResults);
-      console.log("Is Array:", Array.isArray(queryResults));
-      console.log("Length:", queryResults.length);
-      console.log("First row type:", typeof queryResults[0]);
-      console.log("First row keys:", Object.keys(queryResults[0]));
-      console.log("First row values:", Object.values(queryResults[0]));
-      console.log("First row stringified:", JSON.stringify(queryResults[0]));
-      console.log("Dataset ID:", queryDatasetId);
-      console.log("=====================================================");
+  // Generate a report from API response
+  const generateReportFromResponse = useCallback(async (response, userQuery, datasetId) => {
+    try {
+      console.log("Generating report for query:", userQuery, "on dataset:", datasetId);
+      const report = await reportService.generateReport(userQuery, datasetId, []);
+      return report;
+    } catch (error) {
+      console.log("Error generating report:", error);
+      return null;
     }
-  }, [queryResults, queryDatasetId]);
-
-  // Sync with the chat context for results
-  useEffect(() => {
-    if (currentMessages && currentMessages.length > 0) {
-      // If we have messages but no query results, check the last message for results
-      if ((!queryResults || queryResults.length === 0) && !isLoading) {
-        // Use tableDataService to extract results from messages
-        const resultData = tableDataService.extractResultsFromMessages(currentMessages);
-
-        if (resultData && resultData.results && resultData.results.length > 0) {
-          console.log("Syncing query results from current messages:", resultData.results.length, "results found");
-          setQueryResults(resultData.results);
-          setError(resultData.error || null);
-          setRetries(resultData.retries || 0);
-
-          // Get dataset ID from messages if available
-          const assistantMessages = currentMessages.filter(msg => msg.role === 'assistant' && msg.datasetId);
-          if (assistantMessages.length > 0) {
-            const lastDatasetId = assistantMessages[assistantMessages.length - 1].datasetId;
-            if (lastDatasetId) {
-              setQueryDatasetId(lastDatasetId);
-            }
-          }
-
-          // Ensure we're in the right view mode
-          if (setHasInteracted) {
-            setHasInteracted(true);
-            sessionStorage.setItem('hasInteracted', 'true');
-          }
-        }
-      }
-    }
-  }, [currentMessages, queryResults, isLoading, setHasInteracted]);
-
-  // Check if a query appears to be asking for a report
-  const isReportQuery = useCallback((query) => {
-    const reportKeywords = [
-      'generate report',
-      'create report',
-      'show report',
-      'make report',
-      'produce report',
-      'build report',
-      'analyze',
-      'comprehensive analysis',
-      'detailed analysis',
-      'in-depth analysis',
-      'generate analysis',
-      'summarize',
-      'visualize',
-      'dashboard',
-      'insights',
-      'trends'
-    ];
-
-    const lowerQuery = query.toLowerCase();
-    return reportKeywords.some(keyword => lowerQuery.includes(keyword));
   }, []);
 
-  // Generate a report based on a query
-  const generateReport = useCallback(async (query, datasetId) => {
-    if (!query.trim() || !datasetId) {
-      setError("Query and dataset ID are required to generate a report");
-      return null;
-    }
-
-    setIsGeneratingReport(true);
-    setError(null);
-
-    try {
-      // Import the report service dynamically
-      const reportServiceModule = await import('../../reports/services/reportService');
-      const reportService = reportServiceModule.default;
-
-      // Get conversation history for context
-      const formattedHistory = apiService.formatConversationHistory(currentMessages);
-
-      // Generate the report
-      return await reportService.generateReport(query, datasetId, formattedHistory);
-    } catch (err) {
-      console.error("Error generating report:", err);
-      setError(`Failed to generate report: ${err.message}`);
-      return null;
-    } finally {
-      setIsGeneratingReport(false);
-    }
-  }, [currentMessages]);
-
-  // Function to handle query submission
-  const handleQuerySubmit = async (queryInput, datasetId) => {
-    console.log("Processing query submission:", queryInput, "for dataset:", datasetId);
-
-    if (!queryInput.trim()) return;
-
-    // Validate dataset ID
-    if (!datasetId) {
-      setError("Please select a dataset to query");
-      return;
-    }
-
-    // Remember that user has interacted
-    if (setHasInteracted) {
-      setHasInteracted(true);
-      sessionStorage.setItem('hasInteracted', 'true');
-    }
-
-    setIsLoading(true);
-    setError(null);
-    setQueryResults(null);
-    setRetries(null);
-    setQueryDatasetId(datasetId);
-
-    try {
-      // Set the selected dataset as active
+  // Handle regular query response
+  const handleRegularQueryResponse = useCallback((response, userQuery, datasetId, datasetName) => {
+    // Process response data
+    if (response && response.results) {
+      // Set the results directly - don't use formatQueryResults
+      setQueryResults(response.results);
+      setRetries(response.retries || 0);
       setActiveDataset(datasetId);
+      setActiveDatasetName(datasetName);
 
-      // Get dataset info
-      const dataset = datasets.find(d => d.id === datasetId) || { name: 'Dataset' };
+      // Check if response contains visualizations/insights for a report
+      if (
+        (response.visualizations && response.visualizations.length > 0) ||
+        (response.insights && response.insights.length > 0)
+      ) {
+        console.log("Complex or visualization-rich response detected");
 
-      // First clear existing messages
-      clearMessages();
+        // Create a report-like object from the response
+        const report = createReportFromResponse(response, userQuery, datasetId);
+        setActiveReport(report);
 
-      // Add the user's message
-      await addMessage('user', queryInput, {
-        query: queryInput,
-        datasetId: datasetId
-      });
-
-      // Always treat as a report query
-      console.log(`Generating report for query: "${queryInput}" on dataset: ${datasetId}`);
-
-      const report = await generateReport(queryInput, datasetId);
-
-      if (report) {
-        // Add assistant message with the report
-        await addMessage('assistant', "I've generated a report based on your query:", {
-          report: report,
-          datasetId: datasetId,
-          datasetName: dataset.name
+        // Add assistant message with report
+        addMessage('assistant', "I've visualized your data", {
+          results: response.results,
+          retries: response.retries || 0,
+          datasetId,
+          datasetName,
+          report
         });
       } else {
-        // If report generation fails, fall back to regular query
-        console.log("Report generation failed, falling back to regular query");
-        const response = await apiService.sendQuery(queryInput, [], datasetId);
-
-        // Process response and handle visualization data as a report if present
-        if (response.isComplex || (response.visualizations && response.visualizations.length > 0)) {
-          handleRegularQueryResponse(response, datasetId, dataset);
-        } else {
-          // If no visualizations are available, create a basic report format from the results
-          const basicReport = {
-            title: queryInput,
-            query: queryInput,
-            createdAt: new Date().toISOString(),
-            sections: [{
-              title: "Query Results",
-              content: response.aiResponse || "Here are the results of your query",
-              tableData: response.results || []
-            }],
-            results: response.results || []
-          };
-
-          await addMessage('assistant', response.aiResponse || "Request Successful", {
-            results: response.results || [],
-            retries: response.retries || 0,
-            datasetId: datasetId,
-            datasetName: dataset.name,
-            report: basicReport  // Always include a report
-          });
-        }
+        // Add a simple message with just results (no report)
+        addMessage('assistant', response.aiResponse || 'Here are the results', {
+          results: response.results,
+          retries: response.retries || 0,
+          datasetId,
+          datasetName
+        });
       }
-    } catch (err) {
-      console.error("Error handling query:", err);
-      setError('Network error: ' + err.message);
+    } else {
+      // Handle error or empty response
+      setError('No results returned. Please try a different query.');
+      addMessage('assistant', 'No results found. Please try a different query.');
+    }
 
-      // Add error message to the chat
-      await addMessage('assistant', `Error: ${err.message}`, {
-        error: err.message,
-        datasetId: datasetId
+    // Update UI state
+    setIsLoading(false);
+    setIsGeneratingReport(false);
+
+    // Trigger event with query results
+    window.dispatchEvent(new CustomEvent('queryResultsUpdate', {
+      detail: {
+        results: response.results,
+        error: null,
+        retries: response.retries || 0,
+        datasetId,
+        datasetName,
+        report: activeReport
+      }
+    }));
+  }, [addMessage, setQueryResults, setRetries, setActiveDataset, setActiveDatasetName, setActiveReport]);
+
+  // Handle complex query with isComplex flag
+  const handleComplexQuery = useCallback((response, userQuery, datasetId) => {
+    console.log("Handling complex query with isComplex flag");
+
+    // Generate random id for the report
+    const reportId = `report-${Date.now()}`;
+    const timestamp = new Date().toISOString();
+
+    // Extract data for top clients and therapy areas
+    const hasClientViz = response.visualizations && response.visualizations.some(viz =>
+      viz.data && viz.data[0] && viz.data[0].Client);
+    const hasTherapyViz = response.visualizations && response.visualizations.some(viz =>
+      viz.data && viz.data[0] && viz.data[0].TherapyArea);
+
+    console.log("Identified visualizations:", { clientViz: hasClientViz, therapyViz: hasTherapyViz });
+
+    // Separate insights by data type (if applicable)
+    let clientInsights = [];
+    let therapyAreaInsights = [];
+
+    if (response.insights && response.insights.length > 0) {
+      // Split insights - first half for clients, second half for therapy areas
+      const midpoint = Math.floor(response.insights.length / 2);
+      clientInsights = response.insights.slice(0, midpoint);
+      therapyAreaInsights = response.insights.slice(midpoint);
+
+      console.log("Insights separated:", {
+        clientInsights: clientInsights.length,
+        therapyAreaInsights: therapyAreaInsights.length
       });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Helper function to create a bar chart visualization from table data
-  const createBarChartFromTableData = (tableVisualization, title) => {
-    if (!tableVisualization || !tableVisualization.data || tableVisualization.data.length === 0) {
-      return null;
     }
 
-    const data = tableVisualization.data;
-    const firstRow = data[0];
+    // Create report sections
+    const sections = [];
 
-    // Determine the key fields
-    const labelField = Object.keys(firstRow)[0]; // First column as label (e.g., "Client" or "TherapyArea")
-    const valueField = Object.keys(firstRow)[1]; // Second column as value (e.g., "total_amount")
+    // Create visualizations for each data type
+    const visualizationsArray = [];
 
-    return {
-      type: "bar",
-      title: title || tableVisualization.title || "Data Visualization",
-      data: data,
-      config: {
-        xAxis: labelField,
-        yAxis: valueField,
-        sortBy: valueField,
-        sortDirection: "desc"
+    // Add client bar chart if client data exists
+    if (hasClientViz) {
+      visualizationsArray.push({
+        type: "bar",
+        title: "Top Clients by Sales",
+        data: response.results.filter(row => row.dataType === "client"),
+        config: {
+          xAxis: "Client",
+          yAxis: "total_amount",
+          sortBy: "total_amount",
+          sortDirection: "desc"
+        }
+      });
+    }
+
+    // Add therapy area bar chart if therapy data exists
+    if (hasTherapyViz) {
+      visualizationsArray.push({
+        type: "bar",
+        title: "Top Therapy Areas by Sales",
+        data: response.results.filter(row => row.dataType === "therapyArea"),
+        config: {
+          xAxis: "TherapyArea",
+          yAxis: "total_amount",
+          sortBy: "total_amount",
+          sortDirection: "desc"
+        }
+      });
+    }
+
+    // Add original table visualizations
+    if (response.visualizations && response.visualizations.length > 0) {
+      response.visualizations.forEach(viz => {
+        visualizationsArray.push(viz);
+      });
+    }
+
+    // If narrative exists, create a single section with all visualizations
+    if (response.narrative) {
+      sections.push({
+        title: "Analysis Results",
+        content: response.narrative,
+        visualizations: visualizationsArray,
+        insights: response.insights || []
+      });
+    } else {
+      // If no narrative, create separate sections for clients and therapy areas
+      if (hasClientViz) {
+        sections.push({
+          title: "Top Clients by Sales",
+          content: "Analysis of the top clients by total sales value.",
+          visualizations: [
+            // Create bar chart visualization for clients
+            {
+              type: "bar",
+              title: "Top Clients by Sales",
+              data: response.results.filter(row => row.dataType === "client"),
+              config: {
+                xAxis: "Client",
+                yAxis: "total_amount",
+                sortBy: "total_amount",
+                sortDirection: "desc"
+              }
+            },
+            // Add the original table visualization
+            response.visualizations.find(viz => viz.data[0] && viz.data[0].Client)
+          ].filter(Boolean),
+          insights: clientInsights
+        });
       }
+
+      if (hasTherapyViz) {
+        sections.push({
+          title: "Top Therapy Areas by Sales",
+          content: "Analysis of the top therapy areas by total sales value.",
+          visualizations: [
+            // Create bar chart visualization for therapy areas
+            {
+              type: "bar",
+              title: "Top Therapy Areas by Sales",
+              data: response.results.filter(row => row.dataType === "therapyArea"),
+              config: {
+                xAxis: "TherapyArea",
+                yAxis: "total_amount",
+                sortBy: "total_amount",
+                sortDirection: "desc"
+              }
+            },
+            // Add the original table visualization
+            response.visualizations.find(viz => viz.data[0] && viz.data[0].TherapyArea)
+          ].filter(Boolean),
+          insights: therapyAreaInsights
+        });
+      }
+    }
+
+    // Create the complete report object
+    const report = {
+      id: reportId,
+      title: response.prompt,
+      query: response.prompt,
+      createdAt: timestamp,
+      visualizations: response.visualizations || [],
+      narrative: response.narrative || "",
+      insights: response.insights || [],
+      sections: sections,
+      results: response.results
     };
-  };
 
-  // Helper function to handle regular query responses
-  const handleRegularQueryResponse = async (response, datasetId, dataset) => {
-    // Log the full API response for debugging
-    console.log("FULL API RESPONSE:", JSON.stringify(response, null, 2));
+    console.log("Setting active report:", report);
+    console.log("Report sections:", sections);
 
-    // NEW: Add debugging for complex queries
+    // Set the report in state
+    setActiveReport(report);
+    return report;
+  }, []);
+
+  // Create a report-like object from a regular query response
+  const createReportFromResponse = useCallback((response, userQuery, datasetId) => {
     if (response.isComplex) {
       console.log("Complex query detected:", response.isComplex);
       console.log("Visualizations:", response.visualizations);
       console.log("Insights:", response.insights);
       console.log("Narrative:", response.narrative);
+
+      console.log("RAW API RESPONSE STRUCTURE:", {
+        isComplex: !!response.isComplex,
+        hasVisualizations: !!response.visualizations && response.visualizations.length > 0,
+        visualizationsCount: response.visualizations ? response.visualizations.length : 0,
+        hasInsights: !!response.insights && response.insights.length > 0,
+        insightsCount: response.insights ? response.insights.length : 0,
+        hasNarrative: !!response.narrative,
+        narrativeLength: response.narrative ? response.narrative.length : 0
+      });
     }
 
-    console.log("RAW API RESPONSE STRUCTURE:", {
-      isComplex: response.isComplex,
-      hasVisualizations: !!response.visualizations,
-      visualizationsCount: response.visualizations ? response.visualizations.length : 0,
-      hasInsights: !!response.insights,
-      insightsCount: response.insights ? response.insights.length : 0,
-      hasNarrative: !!response.narrative,
-      narrativeLength: response.narrative ? response.narrative.length : 0,
-      responseKeys: Object.keys(response)
+    // Handle different types of responses
+    if (response.isComplex ||
+        (response.visualizations && response.visualizations.length > 0) ||
+        (response.insights && response.insights.length > 0)) {
+      console.log("Creating report data for complex query:", {
+        isComplex: !!response.isComplex,
+        visualizationsCount: response.visualizations ? response.visualizations.length : 0,
+        insightsCount: response.insights ? response.insights.length : 0
+      });
+
+      return handleComplexQuery(response, userQuery, datasetId);
+    }
+
+    // For simple responses, create a basic report
+    return null;
+  }, [handleComplexQuery]);
+
+  // Submit a query to the backend
+  const handleQuerySubmit = useCallback(async (query, datasetId, datasetName, options = {}) => {
+    console.log("Processing query submission:", query, "for dataset:", datasetId);
+
+    // Set initial state
+    setIsLoading(true);
+    setError(null);
+
+    // Clear previous messages if starting a new chat
+    if (options.clearChat) {
+      clearMessages();
+    }
+
+    // Dispatch event to clear results
+    window.dispatchEvent(new CustomEvent('clearQueryResults'));
+
+    // Update UI
+    if (setHasInteracted && typeof setHasInteracted === 'function') {
+      setHasInteracted(true);
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem('hasInteracted', 'true');
+      }
+    }
+
+    // Add user message to chat
+    addMessage('user', query, {
+      query,
+      datasetId
     });
 
-    // Process response
-    if (response.error) {
-      console.error("API returned error:", response.error);
-      setError(response.error);
-      setRetries(response.retries || 0);
-      await addMessage('assistant', `Error: ${response.error}`, {
-        error: response.error,
-        datasetId: datasetId
-      });
-    } else {
-      console.log("API returned results:", response.results ? response.results.length : 0, "rows");
+    // Check if the query is complex or requesting a report
+    const shouldGenerateReport = query.toLowerCase().includes('report') ||
+                                query.toLowerCase().includes('chart') ||
+                                query.toLowerCase().includes('graph') ||
+                                query.toLowerCase().includes('visualize') ||
+                                query.toLowerCase().includes('visualization');
 
-      // Use tableDataService to normalize the results
-      const normalizedResults = tableDataService.normalizeTableData(response.results || []);
-      setQueryResults(normalizedResults);
-      setRetries(response.retries || 0);
+    // Try to generate a report first if requested
+    if (shouldGenerateReport) {
+      try {
+        console.log("Generating report for query:", query, "on dataset:", datasetId);
+        setIsGeneratingReport(true);
 
-      // Check if the response is complex or contains visualizations
-      if (response.isComplex || (response.visualizations && response.visualizations.length > 0)) {
-        console.log("Complex or visualization-rich response detected");
+        const report = await generateReportFromResponse(null, query, datasetId);
 
-        // Creating report data for complex query
-        console.log("Creating report data for complex query:", {
-          isComplex: response.isComplex,
-          visualizationsCount: response.visualizations?.length || 0,
-          insightsCount: response.insights?.length || 0
-        });
-
-        // Create a report object with a unique ID that works with our ReportViewer component
-        const reportData = {
-          id: `report-${new Date().getTime()}`, // Add a unique ID to ensure the report is seen as new
-          title: response.prompt || "Data Visualization",
-          query: response.prompt,
-          createdAt: new Date().toISOString(),
-          visualizations: response.visualizations || [],
-          narrative: response.narrative || "Analysis of your query results",
-          insights: response.insights || [],
-          sections: []
-        };
-
-        // NEW: Improved handling for complex query structure
-        if (response.isComplex) {
-          console.log("Handling complex query with isComplex flag");
-
-          // Find client and therapy area visualizations based on data structure
-          const clientViz = response.visualizations.find(v =>
-            v.data && v.data[0] && 'Client' in v.data[0]);
-          const therapyViz = response.visualizations.find(v =>
-            v.data && v.data[0] && 'TherapyArea' in v.data[0]);
-
-          console.log("Identified visualizations:", {
-            clientViz: !!clientViz,
-            therapyViz: !!therapyViz
-          });
-
-          // Extract and organize the insights by type
-          let clientInsights = [];
-          let therapyAreaInsights = [];
-
-          if (response.insights && response.insights.length > 0) {
-            // Split insights evenly between the two sections
-            const halfIndex = Math.ceil(response.insights.length / 2);
-            clientInsights = response.insights.slice(0, halfIndex);
-            therapyAreaInsights = response.insights.slice(halfIndex);
-
-            console.log("Insights separated:", {
-              clientInsights: clientInsights.length,
-              therapyAreaInsights: therapyAreaInsights.length
-            });
-          }
-
-          // Create client section if we have client data
-          if (clientViz) {
-            // Convert table visualization to bar chart if needed
-            let visualizations = [clientViz];
-
-            // If the visualization is a table, also create a bar chart version
-            if (clientViz.type === 'table') {
-              const clientBarChart = createBarChartFromTableData(
-                clientViz,
-                "Top Clients by Sales"
-              );
-
-              if (clientBarChart) {
-                visualizations = [clientBarChart, clientViz];
-              }
-            }
-
-            reportData.sections.push({
-              title: "Top Clients by Sales",
-              content: "Analysis of the top clients by total sales value.",
-              visualizations: visualizations,
-              insights: clientInsights
-            });
-          }
-
-          // Create therapy area section if we have therapy area data
-          if (therapyViz) {
-            // Convert table visualization to bar chart if needed
-            let visualizations = [therapyViz];
-
-            // If the visualization is a table, also create a bar chart version
-            if (therapyViz.type === 'table') {
-              const therapyBarChart = createBarChartFromTableData(
-                therapyViz,
-                "Top Therapy Areas by Sales"
-              );
-
-              if (therapyBarChart) {
-                visualizations = [therapyBarChart, therapyViz];
-              }
-            }
-
-            reportData.sections.push({
-              title: "Top Therapy Areas by Sales",
-              content: "Analysis of the top therapy areas by total sales value.",
-              visualizations: visualizations,
-              insights: therapyAreaInsights
-            });
-          }
-
-          // If no sections were created (fallback), create a generic one
-          if (reportData.sections.length === 0) {
-            reportData.sections = [{
-              title: "Data Analysis",
-              content: response.narrative || "Analysis of your query results",
-              visualizations: response.visualizations || [],
-              insights: response.insights || []
-            }];
-          }
+        if (report) {
+          // Handle successful report generation
+          setActiveReport(report);
+          setIsGeneratingReport(false);
+          setIsLoading(false);
+          return;
         } else {
-          // Original behavior for regular visualizations
-          // Create bar charts from tables if needed
-          let enhancedVisualizations = [...response.visualizations];
-
-          // If we have tables, create bar charts
-          if (response.visualizations && response.visualizations.length > 0) {
-            response.visualizations.forEach((viz, index) => {
-              if (viz.type === 'table') {
-                const barChart = createBarChartFromTableData(viz, viz.title);
-                if (barChart) {
-                  enhancedVisualizations.push(barChart);
-                }
-              }
-            });
-          }
-
-          reportData.sections = [{
-            title: "Data Analysis",
-            content: response.narrative || "Analysis of your query results",
-            visualizations: enhancedVisualizations,
-            insights: response.insights || []
-          }];
+          // Fall back to regular query if report generation fails
+          console.log("Report generation failed, falling back to regular query");
+          setIsGeneratingReport(false);
         }
-
-        // Add results to the report data
-        reportData.results = normalizedResults;
-
-        // Set this as the active report
-        console.log("Setting active report:", reportData);
-        console.log("Report sections:", reportData.sections);
-
-        // Add the assistant's response with the report
-        await addMessage('assistant', response.aiResponse || "I've visualized your data", {
-          results: normalizedResults,
-          retries: response.retries || 0,
-          datasetId: datasetId,
-          datasetName: dataset.name,
-          report: reportData  // This is the key part - adding the report object
-        });
-
-        // Dispatch event to notify Dashboard that a report is available
-        window.dispatchEvent(new CustomEvent('reportUpdate'));
-      } else {
-        // Create a basic report even for regular responses without visualizations
-        const basicReport = {
-          id: `report-${new Date().getTime()}`, // Add a unique ID
-          title: response.prompt || "Query Results",
-          query: response.prompt,
-          createdAt: new Date().toISOString(),
-          sections: [{
-            title: "Query Results",
-            content: response.aiResponse || "Here are the results of your query",
-            tableData: normalizedResults
-          }],
-          results: normalizedResults
-        };
-
-        // Regular response without visualizations
-        await addMessage('assistant', response.aiResponse || "Request Successful", {
-          results: normalizedResults,
-          retries: response.retries || 0,
-          datasetId: datasetId,
-          datasetName: dataset.name,
-          report: basicReport  // Always include a report, even if basic
-        });
-
-        // Dispatch event to notify Dashboard that a report is available
-        window.dispatchEvent(new CustomEvent('reportUpdate'));
+      } catch (error) {
+        console.log("Error generating report:", error);
+        setIsGeneratingReport(false);
       }
+    }
 
-      // Dispatch an event to update other components
-      const resultUpdateEvent = new CustomEvent('queryResultsUpdate', {
+    // Process as a regular query
+    try {
+      // Send query to API
+      const response = await apiService.sendQuery(query, [], datasetId);
+
+      // Log response for debugging
+      console.log("FULL API RESPONSE:", response);
+
+      // Handle the response
+      handleRegularQueryResponse(response, query, datasetId, datasetName);
+    } catch (error) {
+      // Handle errors
+      console.error("Query error:", error);
+      setError(error.message || "An error occurred while processing your query.");
+      setIsLoading(false);
+
+      // Add error message to chat
+      addMessage('assistant', `Error: ${error.message || "An error occurred while processing your query."}`);
+
+      // Dispatch error event
+      window.dispatchEvent(new CustomEvent('queryResultsUpdate', {
         detail: {
-          results: normalizedResults,
-          error: null,
-          retries: response.retries || 0,
-          datasetId: datasetId,
-          datasetName: dataset.name,
-          // Include report data in the event
-          report: response.isComplex || (response.visualizations && response.visualizations.length > 0) ? {
-            id: `report-${new Date().getTime()}`,
-            visualizations: response.visualizations,
-            narrative: response.narrative,
-            insights: response.insights,
-            isComplex: response.isComplex
-          } : {
-            id: `report-${new Date().getTime()}`,
-            title: response.prompt || "Query Results",
-            sections: [{
-              title: "Query Results",
-              content: response.aiResponse || "Here are the results of your query",
-              tableData: normalizedResults
-            }]
-          }
+          results: null,
+          error: error.message || "An error occurred while processing your query.",
+          retries: 0,
+          datasetId,
+          datasetName
         }
-      });
-      window.dispatchEvent(resultUpdateEvent);
+      }));
     }
-  };
+  }, [
+    addMessage,
+    clearMessages,
+    handleRegularQueryResponse,
+    generateReportFromResponse,
+    setHasInteracted
+  ]);
 
-  // Function for clearing results AND returning to single view
-  const handleClearResults = () => {
-    console.log("Clearing results from useQueryManager - returning to single view");
-
-    // Clear local state
+  // Clear query results
+  const handleClearResults = useCallback(() => {
     setQueryResults(null);
     setError(null);
-    setIsLoading(false);
-    setRetries(null);
-    setQueryDatasetId(null);
+    setRetries(0);
+    setActiveReport(null);
 
-    // Reset interaction state to show single input view
-    if (setHasInteracted) {
+    // Dispatch event
+    window.dispatchEvent(new CustomEvent('clearQueryResults'));
+  }, []);
+
+  // Handle new chat
+  const handleNewChat = useCallback(() => {
+    handleClearResults();
+    clearMessages();
+
+    // Reset UI state
+    if (setHasInteracted && typeof setHasInteracted === 'function') {
       setHasInteracted(false);
-      sessionStorage.removeItem('hasInteracted');
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem('hasInteracted');
+      }
     }
+  }, [handleClearResults, clearMessages, setHasInteracted]);
 
-    // Clear messages
-    clearMessages();
-
-    // Force synchronization between components
-    window.dispatchEvent(new CustomEvent('clearQueryResults'));
-
-    console.log("Results cleared, returned to single view");
-  };
-
-  // Function for starting a new chat while keeping the split view
-  const handleNewChat = () => {
-    console.log("Starting new chat - keeping split view");
-
-    // Clear local state
-    setQueryResults(null);
-    setError(null);
-    setIsLoading(false);
-    setRetries(null);
-    setQueryDatasetId(null);
-
-    // Clear messages but keep the split view
-    clearMessages();
-
-    // Force synchronization between components
-    window.dispatchEvent(new CustomEvent('clearQueryResults'));
-
-    console.log("New chat started, split view maintained");
-  };
-
-  // Set up listener for query result events from other components
+  // Update listeners for query results
   useEffect(() => {
-    const handleResultsUpdate = (event) => {
+    const handleQueryResultsUpdate = (event) => {
       console.log("Received queryResultsUpdate event with data:", event.detail);
 
-      if (event.detail?.results) {
-        // Ensure the results are an array of objects with consistent structure
-        if (Array.isArray(event.detail.results) && event.detail.results.length > 0) {
-          // Check if the first result is an object
-          if (typeof event.detail.results[0] === 'object' && event.detail.results[0] !== null) {
-            console.log("Setting query results from event - using array of objects format");
-
-            // Use tableDataService to normalize the results if needed
-            const normalizedResults = tableDataService.normalizeTableData(event.detail.results);
-
-            // We only want to update the state if the format is correct (array of objects)
-            setQueryResults(normalizedResults);
-            setError(event.detail.error || null);
-            setRetries(event.detail.retries || 0);
-
-            // Track the dataset ID if provided
-            if (event.detail.datasetId) {
-              setQueryDatasetId(event.detail.datasetId);
-
-              // Set this dataset as active in context
-              setActiveDataset(event.detail.datasetId);
-            }
-
-            // Always ensure we're in the split view when displaying results
-            if (setHasInteracted) {
-              setHasInteracted(true);
-              sessionStorage.setItem('hasInteracted', 'true');
-            }
-          } else {
-            console.error("Results from event are not in expected format - first item is not an object");
-            setError("Data format error - please try again");
-          }
-        } else {
-          console.error("Results from event are not a valid array");
-          setError("Invalid data format - please try again");
+      if (event.detail.results) {
+        console.log("Setting query results from event - using array of objects format");
+        // Don't use formatQueryResults, just set the results directly
+        setQueryResults(event.detail.results);
+        setRetries(event.detail.retries || 0);
+        setActiveDataset(event.detail.datasetId);
+        setActiveDatasetName(event.detail.datasetName);
+        if (event.detail.report) {
+          setActiveReport(event.detail.report);
         }
+      } else if (event.detail.error) {
+        setError(event.detail.error);
       }
     };
 
-    window.addEventListener('queryResultsUpdate', handleResultsUpdate);
-
+    window.addEventListener('queryResultsUpdate', handleQueryResultsUpdate);
     return () => {
-      window.removeEventListener('queryResultsUpdate', handleResultsUpdate);
+      window.removeEventListener('queryResultsUpdate', handleQueryResultsUpdate);
     };
-  }, [setHasInteracted, setActiveDataset]);
+  }, []);
+
+  // Debug query results
+  useEffect(() => {
+    if (queryResults) {
+      console.log("============= QUERY RESULTS DIAGNOSTIC =============");
+      console.log("Type of queryResults:", typeof queryResults);
+      console.log("Is Array:", Array.isArray(queryResults));
+      console.log("Length:", Array.isArray(queryResults) ? queryResults.length : 'N/A');
+
+      if (Array.isArray(queryResults) && queryResults.length > 0) {
+        console.log("First row type:", typeof queryResults[0]);
+        console.log("First row keys:", Object.keys(queryResults[0]));
+        console.log("First row values:", Object.values(queryResults[0]));
+        console.log("First row stringified:", JSON.stringify(queryResults[0]));
+      }
+
+      console.log("Dataset ID:", activeDataset);
+      console.log("=====================================================");
+    }
+  }, [queryResults, activeDataset]);
 
   return {
     queryResults,
@@ -655,14 +488,13 @@ const useQueryManager = (setHasInteracted) => {
     isGeneratingReport,
     error,
     retries,
-    queryDatasetId,
+    activeDataset,
+    activeDatasetName,
+    activeReport,
     handleQuerySubmit,
     handleClearResults,
     handleNewChat,
-    setQueryResults,
-    setError,
-    setRetries,
-    generateReport
+    setActiveReport
   };
 };
 

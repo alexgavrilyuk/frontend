@@ -2,7 +2,6 @@
 import React from 'react';
 import { Card } from '../../shared/components';
 // Import the visualization components
-// In ChartDisplay.js
 import { BarChart, LineChart, PieChart, DataTable } from '../../visualizations';
 
 /**
@@ -16,7 +15,14 @@ import { BarChart, LineChart, PieChart, DataTable } from '../../visualizations';
  * @param {Object} props.visualization.config - Configuration options
  */
 const ChartDisplay = ({ visualization }) => {
-  const { type, title, data, config } = visualization;
+  // For debugging
+  console.log('ChartDisplay rendering visualization:', {
+    type: visualization?.type,
+    title: visualization?.title,
+    dataLength: visualization?.data?.length || 0
+  });
+
+  const { type, title, data, config } = visualization || {};
 
   // Return early if no data is provided
   if (!data || data.length === 0) {
