@@ -11,6 +11,7 @@ import DataTable from './DataTable';
  * @param {string} props.title - Section title
  * @param {string} props.content - Section narrative content (markdown formatted)
  * @param {Array} props.visualizations - Array of visualization specifications
+ * @param {Array} props.insights - Array of insight objects
  * @param {boolean} props.collapsible - Whether the section can be collapsed
  * @param {boolean} props.defaultCollapsed - Whether the section starts collapsed
  */
@@ -18,6 +19,7 @@ const ReportSection = ({
   title,
   content,
   visualizations = [],
+  insights = [], // Add insights prop
   collapsible = false,
   defaultCollapsed = false
 }) => {
@@ -30,14 +32,26 @@ const ReportSection = ({
     }
   };
 
+  // Diagnostic logging for section content
+  console.log("ReportSection rendering with:", {
+    title,
+    contentLength: content?.length,
+    visualizationsCount: visualizations?.length,
+    insightsCount: insights?.length
+  });
+
   // Group visualizations by type for better layout
-  const chartVisualizations = visualizations.filter(viz =>
-    ['bar', 'line', 'pie', 'scatter', 'combo', 'heatmap'].includes(viz.type)
-  );
+  const chartVisualizations = visualizations ? visualizations.filter(viz =>
+    viz && ['bar', 'line', 'pie', 'scatter', 'combo', 'heatmap'].includes(viz.type)
+  ) : [];
 
-  const kpiVisualizations = visualizations.filter(viz => viz.type === 'kpi');
+  const kpiVisualizations = visualizations ? visualizations.filter(viz =>
+    viz && viz.type === 'kpi'
+  ) : [];
 
-  const tableVisualizations = visualizations.filter(viz => viz.type === 'table');
+  const tableVisualizations = visualizations ? visualizations.filter(viz =>
+    viz && viz.type === 'table'
+  ) : [];
 
   return (
     <div className="report-section mb-6">
@@ -83,6 +97,21 @@ const ReportSection = ({
               {chartVisualizations.map((viz, index) => (
                 <ChartDisplay key={`chart-${index}`} visualization={viz} />
               ))}
+            </div>
+          )}
+
+          {/* Insights Section */}
+          {insights && insights.length > 0 && (
+            <div className="space-y-4 mb-6">
+              <h4 className="text-sm font-medium text-blue-400">Key Insights</h4>
+              <div className="grid grid-cols-1 gap-4">
+                {insights.map((insight, index) => (
+                  <div key={`insight-${index}`} className="bg-gray-800/50 border border-gray-700/30 rounded-lg p-4">
+                    <h5 className="text-sm font-medium text-white mb-2">{insight.title}</h5>
+                    <p className="text-sm text-gray-300">{insight.description}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

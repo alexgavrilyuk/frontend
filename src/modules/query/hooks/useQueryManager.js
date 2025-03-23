@@ -11,6 +11,8 @@ import tableDataService from '../utils/tableDataService';
  * @returns {Object} Query management state and functions
  */
 const useQueryManager = (setHasInteracted) => {
+  console.log("UPDATED useQueryManager.js loaded with isComplex handling");
+
   const [queryResults, setQueryResults] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -173,8 +175,9 @@ const useQueryManager = (setHasInteracted) => {
   }, [currentMessages]);
 
   // Function to handle query submission
-
   const handleQuerySubmit = async (queryInput, datasetId) => {
+    console.log("Processing query submission:", queryInput, "for dataset:", datasetId);
+
     if (!queryInput.trim()) return;
 
     // Validate dataset ID
@@ -229,7 +232,7 @@ const useQueryManager = (setHasInteracted) => {
         const response = await apiService.sendQuery(queryInput, [], datasetId);
 
         // Process response and handle visualization data as a report if present
-        if (response.visualizations && response.visualizations.length > 0) {
+        if (response.isComplex || (response.visualizations && response.visualizations.length > 0)) {
           handleRegularQueryResponse(response, datasetId, dataset);
         } else {
           // If no visualizations are available, create a basic report format from the results
@@ -268,122 +271,286 @@ const useQueryManager = (setHasInteracted) => {
     }
   };
 
+  // Helper function to create a bar chart visualization from table data
+  const createBarChartFromTableData = (tableVisualization, title) => {
+    if (!tableVisualization || !tableVisualization.data || tableVisualization.data.length === 0) {
+      return null;
+    }
+
+    const data = tableVisualization.data;
+    const firstRow = data[0];
+
+    // Determine the key fields
+    const labelField = Object.keys(firstRow)[0]; // First column as label (e.g., "Client" or "TherapyArea")
+    const valueField = Object.keys(firstRow)[1]; // Second column as value (e.g., "total_amount")
+
+    return {
+      type: "bar",
+      title: title || tableVisualization.title || "Data Visualization",
+      data: data,
+      config: {
+        xAxis: labelField,
+        yAxis: valueField,
+        sortBy: valueField,
+        sortDirection: "desc"
+      }
+    };
+  };
+
   // Helper function to handle regular query responses
-
   const handleRegularQueryResponse = async (response, datasetId, dataset) => {
-   console.log("API response:", response);
+    // Log the full API response for debugging
+    console.log("FULL API RESPONSE:", JSON.stringify(response, null, 2));
 
-   // Process response
-   if (response.error) {
-     console.error("API returned error:", response.error);
-     setError(response.error);
-     setRetries(response.retries || 0);
-     await addMessage('assistant', `Error: ${response.error}`, {
-       error: response.error,
-       datasetId: datasetId
-     });
-   } else {
-     console.log("API returned results:", response.results ? response.results.length : 0, "rows");
+    // NEW: Add debugging for complex queries
+    if (response.isComplex) {
+      console.log("Complex query detected:", response.isComplex);
+      console.log("Visualizations:", response.visualizations);
+      console.log("Insights:", response.insights);
+      console.log("Narrative:", response.narrative);
+    }
 
-     // Use tableDataService to normalize the results
-     const normalizedResults = tableDataService.normalizeTableData(response.results || []);
-     setQueryResults(normalizedResults);
-     setRetries(response.retries || 0);
+    console.log("RAW API RESPONSE STRUCTURE:", {
+      isComplex: response.isComplex,
+      hasVisualizations: !!response.visualizations,
+      visualizationsCount: response.visualizations ? response.visualizations.length : 0,
+      hasInsights: !!response.insights,
+      insightsCount: response.insights ? response.insights.length : 0,
+      hasNarrative: !!response.narrative,
+      narrativeLength: response.narrative ? response.narrative.length : 0,
+      responseKeys: Object.keys(response)
+    });
 
-     // Check if the response contains visualizations (from backend)
-     if (response.visualizations && response.visualizations.length > 0) {
-       console.log("Visualizations found in response:", response.visualizations.length);
+    // Process response
+    if (response.error) {
+      console.error("API returned error:", response.error);
+      setError(response.error);
+      setRetries(response.retries || 0);
+      await addMessage('assistant', `Error: ${response.error}`, {
+        error: response.error,
+        datasetId: datasetId
+      });
+    } else {
+      console.log("API returned results:", response.results ? response.results.length : 0, "rows");
 
-       // Create a report object with a unique ID that works with our ReportViewer component
-       const reportData = {
-         id: `report-${new Date().getTime()}`, // Add a unique ID to ensure the report is seen as new
-         title: response.prompt || "Data Visualization",
-         query: response.prompt,
-         createdAt: new Date().toISOString(),
-         visualizations: response.visualizations,
-         narrative: response.narrative || "Analysis of your query results",
-         insights: response.insights || [],
-         // Include a section format compatible with ReportViewer
-         sections: [
-           {
-             title: "Data Analysis",
-             content: response.narrative || "Analysis of your query results",
-             visualizations: response.visualizations
-           }
-         ],
-         results: normalizedResults
-       };
+      // Use tableDataService to normalize the results
+      const normalizedResults = tableDataService.normalizeTableData(response.results || []);
+      setQueryResults(normalizedResults);
+      setRetries(response.retries || 0);
 
-       // Set this as the active report
-       console.log("Setting active report:", reportData);
+      // Check if the response is complex or contains visualizations
+      if (response.isComplex || (response.visualizations && response.visualizations.length > 0)) {
+        console.log("Complex or visualization-rich response detected");
 
-       // Add the assistant's response with the report
-       await addMessage('assistant', response.aiResponse || "I've visualized your data", {
-         results: normalizedResults,
-         retries: response.retries || 0,
-         datasetId: datasetId,
-         datasetName: dataset.name,
-         report: reportData  // This is the key part - adding the report object
-       });
+        // Creating report data for complex query
+        console.log("Creating report data for complex query:", {
+          isComplex: response.isComplex,
+          visualizationsCount: response.visualizations?.length || 0,
+          insightsCount: response.insights?.length || 0
+        });
 
-       // Dispatch event to notify Dashboard that a report is available
-       window.dispatchEvent(new CustomEvent('reportUpdate'));
-     } else {
-       // Create a basic report even for regular responses without visualizations
-       const basicReport = {
-         id: `report-${new Date().getTime()}`, // Add a unique ID
-         title: response.prompt || "Query Results",
-         query: response.prompt,
-         createdAt: new Date().toISOString(),
-         sections: [{
-           title: "Query Results",
-           content: response.aiResponse || "Here are the results of your query",
-           tableData: normalizedResults
-         }],
-         results: normalizedResults
-       };
+        // Create a report object with a unique ID that works with our ReportViewer component
+        const reportData = {
+          id: `report-${new Date().getTime()}`, // Add a unique ID to ensure the report is seen as new
+          title: response.prompt || "Data Visualization",
+          query: response.prompt,
+          createdAt: new Date().toISOString(),
+          visualizations: response.visualizations || [],
+          narrative: response.narrative || "Analysis of your query results",
+          insights: response.insights || [],
+          sections: []
+        };
 
-       // Regular response without visualizations
-       await addMessage('assistant', response.aiResponse || "Request Successful", {
-         results: normalizedResults,
-         retries: response.retries || 0,
-         datasetId: datasetId,
-         datasetName: dataset.name,
-         report: basicReport  // Always include a report, even if basic
-       });
+        // NEW: Improved handling for complex query structure
+        if (response.isComplex) {
+          console.log("Handling complex query with isComplex flag");
 
-       // Dispatch event to notify Dashboard that a report is available
-       window.dispatchEvent(new CustomEvent('reportUpdate'));
-     }
+          // Find client and therapy area visualizations based on data structure
+          const clientViz = response.visualizations.find(v =>
+            v.data && v.data[0] && 'Client' in v.data[0]);
+          const therapyViz = response.visualizations.find(v =>
+            v.data && v.data[0] && 'TherapyArea' in v.data[0]);
 
-     // Dispatch an event to update other components
-     const resultUpdateEvent = new CustomEvent('queryResultsUpdate', {
-       detail: {
-         results: normalizedResults,
-         error: null,
-         retries: response.retries || 0,
-         datasetId: datasetId,
-         datasetName: dataset.name,
-         // Include report data in the event
-         report: response.visualizations && response.visualizations.length > 0 ? {
-           id: `report-${new Date().getTime()}`,
-           visualizations: response.visualizations,
-           narrative: response.narrative,
-           insights: response.insights
-         } : {
-           id: `report-${new Date().getTime()}`,
-           title: response.prompt || "Query Results",
-           sections: [{
-             title: "Query Results",
-             content: response.aiResponse || "Here are the results of your query",
-             tableData: normalizedResults
-           }]
-         }
-       }
-     });
-     window.dispatchEvent(resultUpdateEvent);
-   }
- };
+          console.log("Identified visualizations:", {
+            clientViz: !!clientViz,
+            therapyViz: !!therapyViz
+          });
+
+          // Extract and organize the insights by type
+          let clientInsights = [];
+          let therapyAreaInsights = [];
+
+          if (response.insights && response.insights.length > 0) {
+            // Split insights evenly between the two sections
+            const halfIndex = Math.ceil(response.insights.length / 2);
+            clientInsights = response.insights.slice(0, halfIndex);
+            therapyAreaInsights = response.insights.slice(halfIndex);
+
+            console.log("Insights separated:", {
+              clientInsights: clientInsights.length,
+              therapyAreaInsights: therapyAreaInsights.length
+            });
+          }
+
+          // Create client section if we have client data
+          if (clientViz) {
+            // Convert table visualization to bar chart if needed
+            let visualizations = [clientViz];
+
+            // If the visualization is a table, also create a bar chart version
+            if (clientViz.type === 'table') {
+              const clientBarChart = createBarChartFromTableData(
+                clientViz,
+                "Top Clients by Sales"
+              );
+
+              if (clientBarChart) {
+                visualizations = [clientBarChart, clientViz];
+              }
+            }
+
+            reportData.sections.push({
+              title: "Top Clients by Sales",
+              content: "Analysis of the top clients by total sales value.",
+              visualizations: visualizations,
+              insights: clientInsights
+            });
+          }
+
+          // Create therapy area section if we have therapy area data
+          if (therapyViz) {
+            // Convert table visualization to bar chart if needed
+            let visualizations = [therapyViz];
+
+            // If the visualization is a table, also create a bar chart version
+            if (therapyViz.type === 'table') {
+              const therapyBarChart = createBarChartFromTableData(
+                therapyViz,
+                "Top Therapy Areas by Sales"
+              );
+
+              if (therapyBarChart) {
+                visualizations = [therapyBarChart, therapyViz];
+              }
+            }
+
+            reportData.sections.push({
+              title: "Top Therapy Areas by Sales",
+              content: "Analysis of the top therapy areas by total sales value.",
+              visualizations: visualizations,
+              insights: therapyAreaInsights
+            });
+          }
+
+          // If no sections were created (fallback), create a generic one
+          if (reportData.sections.length === 0) {
+            reportData.sections = [{
+              title: "Data Analysis",
+              content: response.narrative || "Analysis of your query results",
+              visualizations: response.visualizations || [],
+              insights: response.insights || []
+            }];
+          }
+        } else {
+          // Original behavior for regular visualizations
+          // Create bar charts from tables if needed
+          let enhancedVisualizations = [...response.visualizations];
+
+          // If we have tables, create bar charts
+          if (response.visualizations && response.visualizations.length > 0) {
+            response.visualizations.forEach((viz, index) => {
+              if (viz.type === 'table') {
+                const barChart = createBarChartFromTableData(viz, viz.title);
+                if (barChart) {
+                  enhancedVisualizations.push(barChart);
+                }
+              }
+            });
+          }
+
+          reportData.sections = [{
+            title: "Data Analysis",
+            content: response.narrative || "Analysis of your query results",
+            visualizations: enhancedVisualizations,
+            insights: response.insights || []
+          }];
+        }
+
+        // Add results to the report data
+        reportData.results = normalizedResults;
+
+        // Set this as the active report
+        console.log("Setting active report:", reportData);
+        console.log("Report sections:", reportData.sections);
+
+        // Add the assistant's response with the report
+        await addMessage('assistant', response.aiResponse || "I've visualized your data", {
+          results: normalizedResults,
+          retries: response.retries || 0,
+          datasetId: datasetId,
+          datasetName: dataset.name,
+          report: reportData  // This is the key part - adding the report object
+        });
+
+        // Dispatch event to notify Dashboard that a report is available
+        window.dispatchEvent(new CustomEvent('reportUpdate'));
+      } else {
+        // Create a basic report even for regular responses without visualizations
+        const basicReport = {
+          id: `report-${new Date().getTime()}`, // Add a unique ID
+          title: response.prompt || "Query Results",
+          query: response.prompt,
+          createdAt: new Date().toISOString(),
+          sections: [{
+            title: "Query Results",
+            content: response.aiResponse || "Here are the results of your query",
+            tableData: normalizedResults
+          }],
+          results: normalizedResults
+        };
+
+        // Regular response without visualizations
+        await addMessage('assistant', response.aiResponse || "Request Successful", {
+          results: normalizedResults,
+          retries: response.retries || 0,
+          datasetId: datasetId,
+          datasetName: dataset.name,
+          report: basicReport  // Always include a report, even if basic
+        });
+
+        // Dispatch event to notify Dashboard that a report is available
+        window.dispatchEvent(new CustomEvent('reportUpdate'));
+      }
+
+      // Dispatch an event to update other components
+      const resultUpdateEvent = new CustomEvent('queryResultsUpdate', {
+        detail: {
+          results: normalizedResults,
+          error: null,
+          retries: response.retries || 0,
+          datasetId: datasetId,
+          datasetName: dataset.name,
+          // Include report data in the event
+          report: response.isComplex || (response.visualizations && response.visualizations.length > 0) ? {
+            id: `report-${new Date().getTime()}`,
+            visualizations: response.visualizations,
+            narrative: response.narrative,
+            insights: response.insights,
+            isComplex: response.isComplex
+          } : {
+            id: `report-${new Date().getTime()}`,
+            title: response.prompt || "Query Results",
+            sections: [{
+              title: "Query Results",
+              content: response.aiResponse || "Here are the results of your query",
+              tableData: normalizedResults
+            }]
+          }
+        }
+      });
+      window.dispatchEvent(resultUpdateEvent);
+    }
+  };
 
   // Function for clearing results AND returning to single view
   const handleClearResults = () => {

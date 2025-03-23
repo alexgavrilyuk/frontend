@@ -15,6 +15,8 @@ import useReport from '../hooks/useReport';
  * @param {boolean} props.isEmbedded - Boolean to indicate if viewer is embedded in chat
  */
 const ReportViewer = ({ reportData, isEmbedded = false }) => {
+  console.log("UPDATED ReportViewer.js loaded with insights passing");
+
   const { reportId } = useParams();
   const [activeSection, setActiveSection] = useState(0);
 
@@ -36,6 +38,15 @@ const ReportViewer = ({ reportData, isEmbedded = false }) => {
       getReport(reportId);
     }
   }, [reportId, reportData, getReport]);
+
+  // Debug log for report data
+  useEffect(() => {
+    const displayReport = reportData || report;
+    if (displayReport) {
+      console.log("ReportViewer processing report data:", displayReport);
+      console.log("Report sections:", displayReport.sections || []);
+    }
+  }, [reportData, report]);
 
   // Handle error state
   if (error) {
@@ -72,7 +83,8 @@ const ReportViewer = ({ reportData, isEmbedded = false }) => {
     {
       title: 'Report Results',
       content: displayReport.narrative || 'No narrative content available',
-      visualizations: displayReport.visualizations || []
+      visualizations: displayReport.visualizations || [],
+      insights: displayReport.insights || [] // Add insights to default section
     }
   ];
 
@@ -91,7 +103,7 @@ const ReportViewer = ({ reportData, isEmbedded = false }) => {
         />
 
         {/* Navigation for multiple sections */}
-        {hasSections && (
+        {hasSections && sections.length > 1 && (
           <div className="flex overflow-x-auto border-b border-gray-700/50 bg-gray-800/50">
             {sections.map((section, index) => (
               <button
@@ -115,6 +127,7 @@ const ReportViewer = ({ reportData, isEmbedded = false }) => {
             title={reportSections[activeSection].title}
             content={reportSections[activeSection].content}
             visualizations={reportSections[activeSection].visualizations}
+            insights={reportSections[activeSection].insights} // Pass insights to section
           />
         </div>
       </Card>

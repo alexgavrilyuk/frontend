@@ -5,6 +5,10 @@ import { routes, Providers } from './app/moduleRegistry';
 import Dashboard from './app/components/Dashboard';
 import { FirestoreRecovery } from './core/error-handling';
 import { Login, ProtectedRoute } from './modules/auth';
+import TestBuild from './TestBuild';
+
+
+console.log("App.js loaded TestBuild:", TestBuild);
 
 function App() {
   const [hasFirestoreError, setHasFirestoreError] = useState(false);
